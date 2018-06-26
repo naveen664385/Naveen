@@ -1,0 +1,10 @@
+select * from
+
+hz_parties
+
+
+random classifier
+
+clasiifier
+
+tensor flow
