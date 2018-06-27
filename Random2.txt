@@ -11,3 +11,5 @@ scipy
 python
 ----
 27th jun 2018
+27 jun 2
+27 jun 3
