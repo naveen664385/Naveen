@@ -1,0 +1,232 @@
+import pandas as pd
+import json
+import math
+from datetime import datetime
+import time
+import logging
+from kiteconnect import KiteConnect 
+import os
+# KITE CREDENTIALS
+
+
+#ZERODHA_API_KEY = open("D:\\GIST ALGOS\\INTRADAY EXPIRY ALGO\\order_access\\api_key.txt",'r').read()
+#ZERODHA_API_SECRET = open("D:\\GIST ALGOS\\INTRADAY EXPIRY ALGO\\order_access\\api_secret.txt",'r').read()
+#kite = KiteConnect(api_key=ZERODHA_API_KEY)
+
+#access_token = open("D:\\GIST ALGOS\\INTRADAY EXPIRY ALGO\\order_access\\access_token.txt",'r').read()
+#kite.set_access_token(access_token)
+
+# kite = KiteConnect(api_key="crriyu5vlpm08iua")
+# print(kite.login_url())
+# data = kite.generate_session('n6btgzj6ahRmYBG3hQYJ7fEVk5xhBXML', api_secret="r91a37hxsacj8fxxfgoyn5per201pkvk")
+# print(data['access_token'])
+
+
+# ALGO PARAMETERS
+scrip='NSE:NIFTY 50'
+symbol="NIFTY03NOV"
+expiry_date='2022/11/03'
+expiry_date_option ='2022-11-03'
+strike_scale=50
+refresh_time =60
+
+# SAMCO CREDENTIALS FOR OPTION CHAIN -- NEED TO SHIFT WITH RESPECTIVE PLATFORM
+def run_credentials():
+    from snapi_py_client.snapi_bridge import StocknoteAPIPythonBridge
+    samco = StocknoteAPIPythonBridge()
+    login = samco.login(
+        body={"userId": 'PK1197', 'password': 'alpha@12345', 'yob': '1983'})
+    token = json.loads(login)['sessionToken']
+    headers = {
+        'Accept': 'application/json',
+        'x-session-token': token,
+        'login':login,
+        'samco':samco
+    }
+    return(headers)
+
+# ZERODHA ENTERING TRADES
+def enter_position(symbolname):
+    print(symbolname)
+    order_id=0
+    try:
+        order_id = kite.place_order(tradingsymbol=symbolname,
+                                exchange=kite.EXCHANGE_NFO,
+                                transaction_type=kite.TRANSACTION_TYPE_SELL,
+                                quantity=50,
+                                variety=kite.VARIETY_REGULAR,
+                                order_type=kite.ORDER_TYPE_MARKET,
+                                product=kite.PRODUCT_NRML,
+                                validity=kite.VALIDITY_DAY)
+        logging.info("Order placed. ID is: {}".format(order_id))
+    except Exception as e:
+        print(e)
+        logging.info("Order placement failed: {}".format(e))
+    return order_id
+
+# ZERODHA CLOSING TRADES AS PER ADJUSTMENTS
+def close_position(symbolname):
+    order_id=0
+    try:
+        order_id = kite.place_order(tradingsymbol=symbolname,
+                                exchange=kite.EXCHANGE_NFO,
+                                transaction_type=kite.TRANSACTION_TYPE_BUY,
+                                quantity=50,
+                                variety=kite.VARIETY_REGULAR,
+                                order_type=kite.ORDER_TYPE_MARKET,
+                                product=kite.PRODUCT_NRML,
+                                validity=kite.VALIDITY_DAY)
+
+        logging.info("Order placed. ID is: {}".format(order_id))
+    except Exception as e:
+        logging.info("Order placement failed: {}".format(e))
+    return order_id
+
+# INITIATING SAMCO PROCESS TO GET OPTION CHAIN
+creds=run_credentials()
+creds['samco'].set_session_token(sessionToken=creds['x-session-token'])
+samco=creds['samco']
+option_strikes =json.loads(samco.search_equity_derivative(search_symbol_name=symbol,exchange=samco.EXCHANGE_NFO))
+current_price =samco.get_quote(symbol_name='NIFTY',exchange=samco.EXCHANGE_NSE)
+option_strikes['searchResults'][1]['tradingSymbol']
+option_chain_data=samco.get_option_chain(search_symbol_name=symbol,exchange=samco.EXCHANGE_NFO,expiry_date=expiry_date_option)
+option_chain_df =pd.json_normalize(json.loads(option_chain_data),['optionChainDetails'])
+# print(option_chain_df)
+if (math.trunc(float(option_chain_df['spotPrice'][1]))%strike_scale) >30:
+    adjust_scale =50
+elif (math.trunc(float(option_chain_df['spotPrice'][1]))%strike_scale) <=30:
+    adjust_scale =0
+
+# CALCULATING ATM STRIKE WITH SPOT FUNCTION
+def spot_price(scripname):
+    last_price= int(kite.ltp(scripname)[scripname]["last_price"])
+    return last_price
+
+# CALCULATING PARAMETERS FOR ALGO 
+atm_strike=(spot_price(scrip)-(spot_price(scrip)%strike_scale)+adjust_scale)
+
+print(atm_strike)
+option_chain_df['strikePrice'] = pd.to_numeric(option_chain_df['strikePrice'])
+option_chain_df['lastTradedPrice'] = pd.to_numeric(option_chain_df['lastTradedPrice'])
+# ce_trade_record =option_chain_df[(option_chain_df['strikePrice']==atm_strike) & (option_chain_df['optionType']=='CE')].iloc[0]
+# pe_trade_record=option_chain_df[(option_chain_df['lastTradedPrice'] <= ce_trade_record['lastTradedPrice'])& (option_chain_df['optionType']=='PE')].sort_values(by='lastTradedPrice',ascending=False).iloc[0]
+# atm_pe_strike=pe_trade_record['strikePrice']
+instruments=pd.DataFrame(kite.instruments(exchange='NFO'))
+# print(instruments, atm_strike)
+
+# GET TRADE SYMBOL FOR OPTOINS
+def get_trade_symbol(strike_price,option_type):
+    return instruments[(instruments['strike']==atm_strike) & (instruments['expiry']==datetime.strptime(expiry_date,'%Y/%m/%d').date())&(instruments['instrument_type']==option_type)]['tradingsymbol'].iloc[0]
+
+#def square_off_pos(symbolname):
+#    return samco.square_off_position(body={ 
+#                        "positionSquareOffRequestList": [
+#                           {
+#                        "exchange": samco.EXCHANGE_NFO,
+#                        "symbolName":symbolname,
+#                        "productType":samco.PRODUCT_MIS,
+#                        "netQuantity":"50",
+#                        "transactionType":samco.TRANSACTION_TYPE_SELL
+#                             }                             ]
+#                                 })
+all_positions=pd.DataFrame(kite.positions()['net'])
+open_positions=all_positions[all_positions['quantity']!=0]
+open_positions['Name']=open_positions['tradingsymbol'].str.slice(0,5)
+nifty_open_cnt =open_positions[open_positions['Name'] == 'NIFTY'].count()['tradingsymbol']
+try:
+    current_trade_type=pd.read_csv(os.getcwd()+'\\current_trade_type.csv')
+    current_trade_type = current_trade_type['current_trade_type'][0]
+except Exception as e:
+    print('No data in current trade file')
+if nifty_open_cnt ==0:
+    enter_position(get_trade_symbol(atm_strike,'CE'))
+    enter_position(get_trade_symbol(atm_strike,'PE'))
+    # INITIALIZING THE FIRST TRADE TYPE
+    current_trade_type='STRAD'
+    thu_trade_type=pd.DataFrame(dict({'current_trade_type':[current_trade_type]}))
+    thu_trade_type.to_csv(os.getcwd()+'\\current_trade_type.csv')
+currentDateAndTime=datetime.now()
+
+print(nifty_open_cnt)
+time.sleep(10)
+
+all_positions=pd.DataFrame(kite.positions()['net'])
+open_positions=all_positions[all_positions['quantity']!=0]
+open_positions['Name']=open_positions['tradingsymbol'].str.slice(0,5)
+nifty_open_cnt =open_positions[open_positions['Name'] == 'NIFTY'].count()['tradingsymbol']
+while (nifty_open_cnt >1 and currentDateAndTime.hour*100+currentDateAndTime.minute >930 and currentDateAndTime.hour*100+currentDateAndTime.minute <1531):
+    print('inside')
+    #######################################
+    option_strikes =json.loads(samco.search_equity_derivative(search_symbol_name=symbol,exchange=samco.EXCHANGE_NFO))
+    current_price =samco.get_quote(symbol_name='NIFTY',exchange=samco.EXCHANGE_NSE)
+    option_chain_data=samco.get_option_chain(search_symbol_name=symbol,exchange=samco.EXCHANGE_NFO,expiry_date=expiry_date_option)
+    option_chain_df =pd.json_normalize(json.loads(option_chain_data),['optionChainDetails'])
+    if math.trunc(float(option_chain_df['spotPrice'][1]))%strike_scale >30:
+        adjust_scale =50
+    elif (math.trunc(float(option_chain_df['spotPrice'][1]))%strike_scale) <=30:
+        adjust_scale =0
+    atm_strike=math.trunc(float(option_chain_df['spotPrice'][1]))-math.trunc(float(option_chain_df['spotPrice'][1]))%strike_scale+adjust_scale
+    option_chain_df['strikePrice'] = pd.to_numeric(option_chain_df['strikePrice'])
+    option_chain_df['lastTradedPrice'] = pd.to_numeric(option_chain_df['lastTradedPrice'])
+    ce_trade_record =option_chain_df[(option_chain_df['strikePrice']==atm_strike) & (option_chain_df['optionType']=='CE')].iloc[0]
+    pe_trade_record=option_chain_df[(option_chain_df['lastTradedPrice'] <= ce_trade_record['lastTradedPrice'])& (option_chain_df['optionType']=='PE')].sort_values(by='lastTradedPrice',ascending=False).iloc[0]
+    atm_pe_strike=pe_trade_record['strikePrice']
+    atm_strike=(spot_price(scrip)-(spot_price(scrip)%strike_scale)+adjust_scale)
+    ##########################################
+    nifty_open_cnt =open_positions[open_positions['Name'] == 'NIFTY'].count()['tradingsymbol']
+    if nifty_open_cnt==2:
+        all_positions=pd.DataFrame(kite.positions()['net'])
+        open_positions=all_positions[all_positions['quantity']!=0]
+        open_positions['Name']=open_positions['tradingsymbol'].str.slice(0,5)
+        open_positions = open_positions[open_positions['Name'] == 'NIFTY']
+    #cur_positions = pd.json_normalize(json.loads(samco.get_positions_data(position_type=samco.POSITION_TYPE_DAY)))
+    #print(cur_positions['status'].iloc[0])
+    #if cur_positions['status'].iloc[0] !='Failure':
+       # cur_position_details =pd.json_normalize(json.loads(cur_positions['positionDetails']))
+        last_price_0 =spot_price('NFO:'+open_positions['tradingsymbol'].iloc[0])
+        last_price_1 =spot_price('NFO:'+open_positions['tradingsymbol'].iloc[1])
+        print(last_price_0)
+        print(last_price_1)
+        if last_price_0 <15 and last_price_1 <15:
+            close_order_id=close_position(open_positions['tradingsymbol'].iloc[0])
+            close_order_id=close_position(open_positions['tradingsymbol'].iloc[1])
+            break
+        elif last_price_0 >= last_price_1*2:
+            if current_trade_type =='STRAD':
+                close_order_id=close_position(open_positions['tradingsymbol'].iloc[0])
+                close_option_type=open_positions['tradingsymbol'].iloc[0][-2:]
+                new_strike_price =option_chain_df[(option_chain_df['lastTradedPrice']<=last_price_1) & (option_chain_df['optionType']==close_option_type)].sort_values(by='lastTradedPrice',ascending=False).iloc[0]['strikePrice']
+                enter_position(get_trade_symbol(new_strike_price,close_option_type))
+                current_trade_type ='STRNG'
+                thu_trade_type=pd.DataFrame(dict({'current_trade_type':[current_trade_type]}))
+                thu_trade_type.to_csv(os.getcwd()+'\\current_trade_type.csv')
+            if current_trade_type =='STRNG':
+                close_order_id=close_position(open_positions['tradingsymbol'].iloc[1])
+                close_option_type=open_positions['tradingsymbol'].iloc[1][-2:]
+                new_strike_price =atm_strike
+                enter_position(get_trade_symbol(new_strike_price,close_option_type))
+                current_trade_type ='STRAD'
+                thu_trade_type=pd.DataFrame(dict({'current_trade_type':[current_trade_type]}))
+                thu_trade_type.to_csv(os.getcwd()+'\\current_trade_type.csv')
+        elif last_price_0*2 <= last_price_1:
+            if current_trade_type =='STRAD':
+                close_order_id=close_position(open_positions['tradingsymbol'].iloc[1])
+                close_option_type=open_positions['tradingsymbol'].iloc[1][-2:]
+                new_strike_price =option_chain_df[(option_chain_df['lastTradedPrice']<=last_price_0) & (option_chain_df['optionType']==close_option_type)].sort_values(by='lastTradedPrice',ascending=False).iloc[0]['strikePrice']
+                enter_position(get_trade_symbol(new_strike_price,close_option_type))
+                current_trade_type ='STRNG'
+                thu_trade_type=pd.DataFrame(dict({'current_trade_type':[current_trade_type]}))
+                thu_trade_type.to_csv(os.getcwd()+'\\current_trade_type.csv')
+            if current_trade_type =='STRNG':
+                close_order_id=close_position(open_positions['tradingsymbol'].iloc[0])
+                close_option_type=open_positions['tradingsymbol'].iloc[0][-2:]
+                new_strike_price =atm_strike
+                enter_position(get_trade_symbol(new_strike_price,close_option_type))
+                current_trade_type ='STRAD'
+                thu_trade_type=pd.DataFrame(dict({'current_trade_type':[current_trade_type]}))
+                thu_trade_type.to_csv(os.getcwd()+'\\current_trade_type.csv')
+    if currentDateAndTime.hour*100+currentDateAndTime.minute >1440:
+        close_order_id=close_position(open_positions['tradingsymbol'].iloc[1])
+        close_order_id=close_position(open_positions['tradingsymbol'].iloc[0])
+        break
+    time.sleep(refresh_time)
