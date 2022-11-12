@@ -1,0 +1,55 @@
+//@version=5
+strategy("BCandle SR Breach", overlay=true,max_lines_count  = 500)
+
+bodyPercent = input.float(75, "BCandle Percent(%)")*0.01
+srLength=input.int(3,"Support Resistance Length")
+
+bCandle = math.abs(close-open)/(high-low) > bodyPercent and math.abs(close-open) > math.abs(close[1]-open[1]) and math.abs(close-open) > math.abs(close[2]-open[2]) and math.abs(close-open) > math.abs(close[3]-open[3])
+
+var hi=0.0
+var lo=0.0
+
+coh=close>open?close:open
+col=close<open?close:open
+
+highh=ta.pivothigh(coh, srLength, srLength)
+lowl=ta.pivotlow(col, srLength, srLength)
+
+
+if na(highh)
+    hi:=hi[1]
+else
+    hi:=highh
+
+if na(lowl)
+    lo:=lo[1]
+else
+    lo:=lowl
+
+if (close[srLength+1]>hi or open[srLength+1]>hi)
+    hi:=na
+if (close[srLength+1]<lo or open[srLength+1]<lo)
+    lo:=na
+
+
+plot(hi==hi[1]?hi:na,offset = -srLength-1,color=color.red,style=plot.style_linebr)
+plot(lo==lo[1]?lo:na,offset = -srLength-1,color=color.red,style=plot.style_linebr)
+
+bgcolor(bCandle?color.new(color.white,90):na)
+
+longCondition= bCandle and close > hi and barstate.isconfirmed and strategy.position_size<=0
+shortCondition = bCandle and close < lo and barstate.isconfirmed and strategy.position_size>=0
+
+var longstop=0.0
+var shortstop=0.0
+
+if longCondition
+    strategy.entry("long",strategy.long)
+    longstop:=low
+if close>shortstop and not shortCondition and not longCondition
+    strategy.close("short",comment = "shortstop")
+if shortCondition
+    strategy.entry("short",strategy.short)
+    shortstop:=high
+if close<longstop and not shortCondition and not longCondition
+    strategy.close("long",comment="longstop")
