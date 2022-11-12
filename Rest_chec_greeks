@@ -1,0 +1,7 @@
+import requests
+api_url='https://test.lisuns.com:4532/'
+api_key='a732fa9e-ff86-43e1-8827-532e9e7e1678'
+cur_url=api_url+'GetExchanges/?accesskey='+api_key
+response=requests.get(cur_url)
+print(cur_url)
+print(response)
