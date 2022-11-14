@@ -1,0 +1,10 @@
+import requests
+import pandas as pd
+api_url='http://test.lisuns.com:4531/'
+api_key='a732fa9e-ff86-43e1-8827-532e9e7e1678'
+symbol_name='17NOV2022'
+cur_url=api_url+'GetLastQuoteOptionChain/?accesskey='+api_key+'&exchange=NFO&product=NIFTY'
+response=requests.get(cur_url)
+Option_chain=pd.DataFrame(response.json())
+Option_chain['STRIKEPRICE']=Option_chain['INSTRUMENTIDENTIFIER'].str[26:].astype(int)
+Option_chain[(Option_chain['INSTRUMENTIDENTIFIER'].str[13:22]==symbol_name) &(Option_chain['STRIKEPRICE'] >17500)]
