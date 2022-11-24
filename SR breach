@@ -63,3 +63,10 @@ draw_lines(4)
 draw_lines(3)
 draw_lines(2)
 draw_lines(1)
+#import mibian
+c=mibian.BS([18484,18500,6.5,7],callPrice= 129)
+print(c.impliedVolatility)
+p = mibian.BS([18484, 18500, 6.5,7], putPrice= 87)
+print(p.impliedVolatility)
+
+df.groupby(df['dv'].shift(fill_value=0).cumsum())['volume'].cumsum().to_frame().rename(columns={'volume':'cumul_sum'})
